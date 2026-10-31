@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kas Kantor</title>
+<style>
+  :root { --bg:#f5f6fa; --card:#fff; --text:#1f2430; --muted:#6b7280; --line:#e5e7eb; --in:#15803d; --out:#b91c1c; --pri:#2563eb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14161c; --card:#1d2029; --text:#e8eaf0; --muted:#9aa1b0; --line:#2c303c; --in:#4ade80; --out:#f87171; --pri:#60a5fa; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  header { padding:16px 20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  h1 { font-size:1.25rem; margin:0; }
+  main { max-width:1000px; margin:0 auto; padding:0 16px 40px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card small { color:var(--muted); display:block; margin-bottom:4px; }
+  .card strong { font-size:1.4rem; }
+  .in { color:var(--in); } .out { color:var(--out); }
+  form { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
+  label { font-size:.8rem; color:var(--muted); display:flex; flex-direction:column; gap:4px; }
+  input, select, button { font:inherit; padding:9px 10px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); }
+  button { cursor:pointer; background:var(--pri); color:#fff; border:none; }
+  button.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button.del { background:transparent; color:var(--out); padding:4px 8px; border:1px solid var(--line); }
+  button:disabled { opacity:.6; cursor:wait; }
+  .full { grid-column:1/-1; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; margin:16px 0 8px; }
+  .toolbar input, .toolbar select { flex:1; min-width:140px; }
+  .table-wrap { overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-size:.9rem; }
+  th, td { padding:10px 8px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  td.ket { white-space:normal; min-width:180px; }
+  td.num, th.num { text-align:right; }
+  #msg { margin:8px 0; min-height:1.2em; font-size:.9rem; }
+  #msg.err { color:var(--out); } #msg.ok { color:var(--in); }
+  @media print { form, .toolbar, header button, .del, #msg { display:none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="judul">Kas Kantor</h1>
+  <div>
+    <button class="ghost" id="btnToken">Ganti Token</button>
+    <button class="ghost" id="btnRefresh">Muat Ulang</button>
+  </div>
+</header>
+
+<main>
+  <section class="cards">
+    <div class="card"><small>Total Pemasukan</small><strong class="in" id="totMasuk">Rp 0</strong></div>
+    <div class="card"><small>Total Pengeluaran</small><strong class="out" id="totKeluar">Rp 0</strong></div>
+    <div class="card"><small>Saldo Kas</small><strong id="saldo">Rp 0</strong></div>
+  </section>
+
+  <section class="card">
+    <form id="form">
+      <label>Tanggal <input type="date" id="tanggal" required></label>
+      <label>Jenis
+        <select id="jenis"><option>Masuk</option><option>Keluar</option></select>
+      </label>
+      <label>Kategori <select id="kategori"></select></label>
+      <label>Jumlah (Rp) <input type="number" id="jumlah" min="1" step="1" required></label>
+      <label>Petugas <input type="text" id="petugas" placeholder="Nama pencatat"></label>
+      <label class="full">Keterangan <input type="text" id="keterangan" required placeholder="Contoh: Beli kertas A4 2 rim"></label>
+      <button type="submit" id="btnSimpan" class="full">Simpan ke Spreadsheet</button>
+    </form>
+  </section>
+
+  <div id="msg"></div>
+
+  <div class="toolbar">
+    <input type="month" id="fBulan" title="Filter bulan">
+    <select id="fJenis"><option value="">Semua jenis</option><option>Masuk</option><option>Keluar</option></select>
+    <input type="search" id="fCari" placeholder="Cari keterangan / kategori…">
+    <button class="ghost" id="btnCsv">Ekspor CSV</button>
+    <button class="ghost" onclick="window.print()">Cetak</button>
+  </div>
+
+  <div class="card table-wrap">
+    <table>
+      <thead><tr>
+        <th>Tanggal</th><th>Jenis</th><th>Kategori</th><th>Keterangan</th>
+        <th class="num">Jumlah</th><th class="num">Saldo</th><th>Petugas</th><th></th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</main>
+
+<script src="config.js"></script>
+<script>
+const cfg = window.KAS_CONFIG;
+const $ = id => document.getElementById(id);
+const rupiah = n => 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+let semua = [];
+
+function token() {
+  let t = localStorage.getItem('kas_token');
+  if (!t) {
+    t = prompt('Masukkan token akses kas:') || '';
+    if (t) localStorage.setItem('kas_token', t);
+  }
+  return t;
+}
+
+function pesan(teks, tipe) {
+  const el = $('msg');
+  el.textContent = teks || '';
+  el.className = tipe || '';
+}
+
+async function api(action, extra) {
+  if (action === 'list') {
+    const url = `${cfg.API_URL}?action=list&token=${encodeURIComponent(token())}`;
+    const res = await fetch(url);
+    return handle(await res.json());
+  }
+  // text/plain menghindari preflight CORS pada Apps Script
+  const res = await fetch(cfg.API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action, token: token(), ...extra })
+  });
+  return handle(await res.json());
+}
+
+function handle(r) {
+  if (!r.ok) {
+    if (/token/i.test(r.error)) localStorage.removeItem('kas_token');
+    throw new Error(r.error);
+  }
+  return r.data;
+}
+
+async function muat() {
+  pesan('Memuat data…');
+  try {
+    semua = await api('list');
+    render();
+    pesan('');
+  } catch (e) { pesan(e.message, 'err'); }
+}
+
+function terfilter() {
+  const bln = $('fBulan').value, jns = $('fJenis').value, q = $('fCari').value.toLowerCase();
+  return semua.filter(r =>
+    (!bln || r.tanggal.startsWith(bln)) &&
+    (!jns || r.jenis === jns) &&
+    (!q || (r.keterangan + ' ' + r.kategori).toLowerCase().includes(q))
+  ).sort((a, b) => b.tanggal.localeCompare(a.tanggal) || b.dicatat.localeCompare(a.dicatat));
+}
+
+function render() {
+  const masuk = semua.filter(r => r.jenis === 'Masuk').reduce((s, r) => s + r.jumlah, 0);
+  const keluar = semua.filter(r => r.jenis === 'Keluar').reduce((s, r) => s + r.jumlah, 0);
+  $('totMasuk').textContent = rupiah(masuk);
+  $('totKeluar').textContent = rupiah(keluar);
+  $('saldo').textContent = rupiah(masuk - keluar);
+
+  const tb = $('tbody');
+  tb.innerHTML = '';
+  terfilter().forEach(r => {
+    const tr = document.createElement('tr');
+    const cls = r.jenis === 'Masuk' ? 'in' : 'out';
+    [r.tanggal, r.jenis, r.kategori, r.keterangan].forEach((v, i) => {
+      const td = document.createElement('td');
+      td.textContent = v;
+      if (i === 1) td.className = cls;
+      if (i === 3) td.className = 'ket';
+      tr.appendChild(td);
+    });
+    const j = document.createElement('td'); j.className = 'num ' + cls;
+    j.textContent = (r.jenis === 'Masuk' ? '+' : '−') + rupiah(r.jumlah); tr.appendChild(j);
+    const s = document.createElement('td'); s.className = 'num'; s.textContent = rupiah(r.saldo); tr.appendChild(s);
+    const p = document.createElement('td'); p.textContent = r.petugas; tr.appendChild(p);
+    const a = document.createElement('td');
+    const b = document.createElement('button'); b.className = 'del'; b.textContent = 'Hapus';
+    b.onclick = () => hapus(r);
+    a.appendChild(b); tr.appendChild(a);
+    tb.appendChild(tr);
+  });
+  if (!tb.children.length) tb.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">Belum ada data</td></tr>';
+}
+
+async function hapus(r) {
+  if (!confirm(`Hapus catatan "${r.keterangan}" (${rupiah(r.jumlah)})?`)) return;
+  try { await api('delete', { id: r.id }); pesan('Catatan dihapus.', 'ok'); await muat(); }
+  catch (e) { pesan(e.message, 'err'); }
+}
+
+$('form').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const btn = $('btnSimpan');
+  btn.disabled = true; btn.textContent = 'Menyimpan…';
+  try {
+    const payload = {
+      tanggal: $('tanggal').value, jenis: $('jenis').value, kategori: $('kategori').value,
+      jumlah: Number($('jumlah').value), petugas: $('petugas').value.trim(), keterangan: $('keterangan').value.trim()
+    };
+    await api('add', { payload });
+    localStorage.setItem('kas_petugas', payload.petugas);
+    $('jumlah').value = ''; $('keterangan').value = '';
+    pesan('Tersimpan ke spreadsheet.', 'ok');
+    await muat();
+  } catch (e) { pesan(e.message, 'err'); }
+  finally { btn.disabled = false; btn.textContent = 'Simpan ke Spreadsheet'; }
+});
+
+$('btnRefresh').onclick = muat;
+$('btnToken').onclick = () => { localStorage.removeItem('kas_token'); token(); muat(); };
+['fBulan', 'fJenis', 'fCari'].forEach(id => $(id).addEventListener('input', render));
+
+$('btnCsv').onclick = () => {
+  const baris = [['Tanggal','Jenis','Kategori','Keterangan','Jumlah','Saldo','Petugas']];
+  terfilter().forEach(r => baris.push([r.tanggal, r.jenis, r.kategori, r.keterangan, r.jumlah, r.saldo, r.petugas]));
+  const csv = baris.map(b => b.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['\ufeff' + csv], { type: 'text/csv' }));
+  a.download = 'kas-kantor.csv'; a.click();
+};
+
+// Inisialisasi
+document.title = $('judul').textContent = cfg.NAMA_KANTOR;
+$('kategori').innerHTML = cfg.KATEGORI.map(k => `<option>${k}</option>`).join('');
+$('tanggal').value = new Date().toLocaleDateString('sv-SE');
+$('petugas').value = localStorage.getItem('kas_petugas') || '';
+muat();
+</script>
+</body>
+</html>
